@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>七大城市天气信息</title>
+    <style>
+        #customers {
+            font-family:"Trebuchet MS", Arial, Helvetica, sans-serif;
+            width:100%;
+            border-collapse:collapse;
+            margin-top: 20px;
+        }
+        #customers td, #customers th {
+            font-size:1em;
+            border:1px solid #98bf21;
+            padding:8px 12px;
+        }
+        #customers th {
+            font-size:1.1em;
+            text-align:left;
+            padding-top:12px;
+            padding-bottom:12px;
+            background-color:#A7C942;
+            color:#ffffff;
+        }
+        #customers tr.alt td {
+            color:#000000;
+            background-color:#EAF2D3;
+        }
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 5px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        .btn:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .btn.active {
+            background: #16a085;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-style: italic;
+        }
+        .no-data {
+            color: #999;
+            font-style: italic;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 style="text-align: center;">七大城市天气信息</h1>
+        
+        <div class="button-container">
+            <button id="sortTempAsc" class="btn active">温度升序 ↑</button>
+            <button id="sortTempDesc" class="btn">温度降序 ↓</button>
+            <button id="reloadBtn" class="btn">刷新数据</button>
+        </div>
+        
+        <table id="customers">
+            <thead>
+                <tr>
+                    <th>城市</th>
+                    <th>ID</th>
+                    <th>路径</th>
+                    <th>时区时间</th>
+                    <th>天气状况</th>
+                    <th>温度</th>
+                    <th>天气代码</th>
+                    <th>时区</th>
+                    <th>更新时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="4" class="loading">正在加载天气数据...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        
+        let weatherData = [];
+        let currentSort = { direction: 'asc' };
+
+       
+        const weatherPriority = {
+            '晴': 1,
+            '多云': 2,
+            '阴': 3,
+            '小雨': 4,
+            '中雨': 4,
+            '大雨': 4,
+            '暴雨': 4,
+            '雷阵雨': 4,
+            '阵雨': 4,
+            '未知': 5
+        };
+
+        async function http(obj){
+            let {method, url, params, data} = obj;
+            
+            if (params){
+                let str = new URLSearchParams(params).toString();
+                url += '?' + str;
+            }
+            
+            let res;
+            if(data){
+                res = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+            } else {
+                res = await fetch(url);
+            }
+
+            return await res.json();
+        }
+
+        
+        async function getCityWeather(cityName) {
+            try {
+                const res = await http({
+                    method: 'GET',
+                    url: 'https://api.seniverse.com/v3/weather/now.json',
+                    params: {
+                        key: 'SWJEEWD_M17tT3zGk',
+                        location: cityName,
+                    }
+                });
+                
+                if (res.results && res.results.length > 0) {
+                    return res.results[0];
+                }
+                return null;
+            } catch (error) {
+                console.error(`获取 ${cityName} 数据时出错:`, error);
+                return null;
+            }
+        }
+
+       
+        async function getAllCitiesWeather() {
+            const cities = ['beijing', 'shanghai', 'guangzhou', 'shenzhen', 'chengdu', 'hangzhou', 'wuhan'];
+            const weatherPromises = cities.map(city => getCityWeather(city));
+            
+            try {
+                const results = await Promise.allSettled(weatherPromises);
+                
+              
+                const successfulResults = results
+                    .filter(result => result.status === 'fulfilled' && result.value !== null)
+                    .map(result => result.value);
+                
+                return successfulResults;
+            } catch (error) {
+                console.error('获取所有城市天气数据时出错:', error);
+                return [];
+            }
+        }
+
+       
+        function getSafeValue(obj, path, defaultValue = null) {
+            const keys = path.split('.');
+            let value = obj;
+            
+            for (const key of keys) {
+                if (value && typeof value === 'object' && key in value) {
+                    value = value[key];
+                } else {
+                    return defaultValue;
+                }
+            }
+            return value !== null && value !== undefined ? value : defaultValue;
+        }
+
+     
+        function getWeatherPriority(weatherText) {
+            return weatherPriority[weatherText] || 5;
+        }
+
+        
+        function sortData(direction) {
+            weatherData.sort((a, b) => {
+                const aTemp = parseFloat(getSafeValue(a, 'now.temperature', 0));
+                const bTemp = parseFloat(getSafeValue(b, 'now.temperature', 0));
+                
+              
+                if (aTemp === bTemp) {
+                    const aWeather = getSafeValue(a, 'now.text', '未知');
+                    const bWeather = getSafeValue(b, 'now.text', '未知');
+                    const aPriority = getWeatherPriority(aWeather);
+                    const bPriority = getWeatherPriority(bWeather);
+                    
+                    return direction === 'asc' 
+                        ? aPriority - bPriority 
+                        : bPriority - aPriority;
+                }
+                
+                
+                return direction === 'asc' 
+                    ? aTemp - bTemp 
+                    : bTemp - aTemp;
+            });
+        }
+
+       
+        function updateButtonStates() {
+            document.getElementById('sortTempAsc').classList.toggle('active', currentSort.direction === 'asc');
+            document.getElementById('sortTempDesc').classList.toggle('active', currentSort.direction === 'desc');
+        }
+
+        
+        function renderWeatherData(data) {
+            const tbody = document.querySelector('#customers tbody');
+            
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="no-data">无法加载天气数据</td></tr>';
+                return;
+            }
+            
+            let htmlStr = '';
+            
+            data.forEach(item => {
+                if (item && item.location && item.now) {
+                    const cityName = getSafeValue(item, 'location.name', '未知城市');
+                     const cityId = getSafeValue(item, 'location.id', '未知ID');
+                    const cityPath = getSafeValue(item, 'location.path', '未知路径');
+                    const timezoneOffset = getSafeValue(item, 'location.timezone_offset', '未知');
+                    const weatherText = getSafeValue(item, 'now.text', '未知');
+                    const temperature = getSafeValue(item, 'now.temperature', 'N/A');
+                    const weatherCode = getSafeValue(item, 'now.code', 'N/A');
+                    const timezone = getSafeValue(item, 'location.timezone', 'N/A');
+                    
+                    
+                    const lastUpdate = getSafeValue(item, 'last_update', '');
+                    const updateTime = lastUpdate ? new Date(lastUpdate).toLocaleString() : 'N/A';
+                    
+                    htmlStr += `
+                    <tr>
+                        
+                        <td>${cityName}</td>
+                        <td>${cityId}</td>
+                        <td>${cityPath}</td>
+                        <td>${timezoneOffset}</td>
+                        <td>${weatherText}</td>
+                        <td>${temperature}°C</td>
+                        <td>${weatherCode}</td>
+                        <td>${timezone}</td>
+                        <td>${updateTime}</td>
+                    </tr>`;
+                }
+            });
+            
+            tbody.innerHTML = htmlStr;
+        }
+
+        
+        function handleSortButtonClick(direction) {
+            currentSort.direction = direction;
+            
+           
+            updateButtonStates();
+            
+          
+            sortData(currentSort.direction);
+            
+            
+            renderWeatherData(weatherData);
+        }
+
+        
+        async function getData(){
+            try {
+                const tbody = document.querySelector('#customers tbody');
+                tbody.innerHTML = '<tr><td colspan="4" class="loading">正在加载天气数据...</td></tr>';
+                
+                const data = await getAllCitiesWeather();
+                weatherData = data;
+                
+                
+                sortData(currentSort.direction);
+                
+               
+                updateButtonStates();
+                
+                
+                renderWeatherData(weatherData);
+            } catch (err) {
+                console.error('获取数据时出错:', err);
+                document.querySelector('#customers tbody').innerHTML = 
+                    '<tr><td colspan="4" class="no-data">获取数据失败，请检查控制台</td></tr>';
+            }
+        }
+
+       
+        document.addEventListener('DOMContentLoaded', function() {
+            
+            getData();
+            
+            
+            document.getElementById('sortTempAsc').addEventListener('click', () => handleSortButtonClick('asc'));
+            document.getElementById('sortTempDesc').addEventListener('click', () => handleSortButtonClick('desc'));
+            
+           
+            document.getElementById('reloadBtn').addEventListener('click', getData);
+        });
+    </script>
+</body>
+</html>
